@@ -43,9 +43,7 @@ Before starting, detect available browser tools:
 | Testimonials | No | User provides or skip section |
 
 ### 2. Capture Screenshots
-
-Use `capture-screenshots` (shipped in `bin/`) to capture the app. This is faster and more consistent than generating Playwright scripts each time.
-
+Use `capture-screenshots` (shipped in `bin/`) for faster, consistent app captures: desktop (1280x720), mobile (375px), and dark mode variants in one run.
 #### Quick capture (all key pages at once):
 ```bash
 capture-screenshots http://localhost:5173 \
@@ -54,10 +52,8 @@ capture-screenshots http://localhost:5173 \
   --prefix screen \
   --mobile --dark
 ```
-
-This produces desktop (1280x720), mobile (375px), and dark mode variants for each page in one run.
-
 #### For authenticated apps:
+Use `--auth user:password` for HTTP Basic Auth.
 ```bash
 capture-screenshots https://app.example.com \
   --pages /,/dashboard,/settings \
@@ -65,38 +61,88 @@ capture-screenshots https://app.example.com \
   --output showcase/screenshots \
   --mobile --dark
 ```
+#### Authenticated multi-tenant apps
+- **Session**: Sign in once; retain one isolated context through A, B, then the signed-in default state. It lives for this run, without a persistent disk profile.
+- **Run**: Save as `capture-tenants.mjs` in a project with Playwright installed. Set `APP_USER`/`APP_PASSWORD` in its environment; run `node capture-tenants.mjs`. Never log credentials, auth cookies or storage state.
+- **Adapt**: Replace illustrative app IDs and app URL/login path, login fields/button, authenticated and tenant/route readiness selectors, cookie name/domain/path and tenant values, page paths/labels, unique prefixes/slugs and output directory.
 
+```javascript
+import { chromium } from 'playwright';
+
+const appUrl = 'https://app.example.com';
+const loginPath = '/login';
+const outputDir = 'showcase/screenshots';
+const selectors = { user: '#email', password: '#password', submit: '#login', authenticated: '#signed-in', tenant: '#tenant', route: '#title' };
+const tenantCookie = { name: 'org_cookie', domain: 'app.example.com', path: '/' };
+const tenants = [
+  { value: 'tenant-a', prefix: 'tenant-a', label: 'Tenant A' },
+  { value: 'tenant-b', prefix: 'tenant-b', label: 'Tenant B' }
+];
+const pages = [
+  { path: '/dashboard', slug: 'dashboard', label: 'Dashboard' },
+  { path: '/settings', slug: 'settings', label: 'Settings' }
+];
+const defaultState = { prefix: 'default', label: 'No tenant selected' };
+const username = process.env.APP_USER;
+const password = process.env.APP_PASSWORD;
+if (!username || !password) throw new Error('Set APP_USER and APP_PASSWORD');
+
+async function capturePages(page, state) {
+  for (const route of pages) {
+    const response = await page.goto(new URL(route.path, appUrl).href);
+    if (!response.ok()) throw new Error('Capture page returned HTTP ' + response.status());
+    await page.locator(selectors.authenticated).waitFor();
+    await page.locator(selectors.tenant).filter({ hasText: state.label }).waitFor();
+    await page.locator(selectors.route).filter({ hasText: route.label }).waitFor();
+    await page.screenshot({ path: outputDir + '/' + state.prefix + '-' + route.slug + '.png' });
+  }
+}
+
+const browser = await chromium.launch({ headless: true });
+try {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  try {
+    const page = await context.newPage();
+    await page.goto(new URL(loginPath, appUrl).href);
+    await page.locator(selectors.user).fill(username);
+    await page.locator(selectors.password).fill(password);
+    await page.locator(selectors.submit).click();
+    await page.locator(selectors.authenticated).waitFor();
+    for (const tenant of tenants) {
+      await context.addCookies([{ ...tenantCookie, value: tenant.value }]);
+      await capturePages(page, tenant);
+    }
+    await context.clearCookies(tenantCookie);
+    await capturePages(page, defaultState);
+  } finally {
+    await context.close();
+  }
+} catch {
+  throw new Error('Capture failed; check login, selectors and expected page content');
+} finally {
+  await browser.close();
+}
+```
+B replaces A at the same cookie tuple; clear only that name/domain/path. Filtered `clearCookies` requires [Playwright 1.43+](https://playwright.dev/docs/api/class-browsercontext#browser-context-clear-cookies); unfiltered `clearCookies()` removes login cookies too.
 #### What to capture:
 
-**a. First Impression** — the main page/dashboard becomes the hero image. Note the immediate value proposition.
-
-**b. Features** — each major section. Use `--pages` with all nav paths. Capture 6-10 key screens that tell the product story.
-
-**c. "How It Works" flow** — the main workflow in sequence. Run `capture-screenshots` multiple times with `--prefix workflow-step` as you navigate through the flow steps.
-
-**d. Detail shots** — zoom into specific UI elements. Use `--full-page` for scrollable content.
-
-**e. Both modes** — `--dark` flag captures light and dark variants automatically. Use the best-looking mode for the hero.
-
+- **a. First Impression** — the main page/dashboard becomes the hero image. Note the immediate value proposition.
+- **b. Features** — each major section. Use `--pages` with all nav paths. Capture 6-10 key screens that tell the product story.
+- **c. "How It Works" flow** — the main workflow in sequence. Run `capture-screenshots` multiple times with `--prefix workflow-step` as you navigate through the flow steps.
+- **d. Detail shots** — zoom into specific UI elements. Use `--full-page` for scrollable content.
+- **e. Both modes** — `--dark` flag captures light and dark variants automatically. Use the best-looking mode for the hero.
 #### Post-capture optimisation:
 ```bash
 img-process batch showcase/screenshots --action optimise --max-width 1920 -o showcase/screenshots-opt
 ```
-
 #### f. Extract the Value Propositions
-Don't just list features. For each one, answer: **why does the user care?**
-- BAD: "Contact management page"
-- GOOD: "See every client, their history, and what needs attention — in one view"
-- BAD: "Search functionality"
-- GOOD: "Find anything in seconds — semantic search understands what you mean, not just what you type"
 
+- Ask **why does the user care?**, not just list features. BAD: "Contact management page". GOOD: "See every client, their history, and what needs attention — in one view".
+- BAD: "Search functionality". GOOD: "Find anything in seconds — semantic search understands what you mean, not just what you type".
 ### 3. Generate the Site
-
 #### Quick Mode: Single Page (same as before)
 One HTML file: hero + feature grid + CTA. Use for MVPs and quick marketing.
-
 #### Standard Mode: Multi-Page Site
-
 ```
 showcase/
 ├── index.html              # Home — hero, overview, feature highlights, CTA
@@ -110,14 +156,10 @@ showcase/
 └── styles.css              # Shared styles (or inline Tailwind CDN)
 ```
 
-**Home page**: Hero with animated GIF or key screenshot, 3-4 feature highlights (not all features — just the best), "How It Works" summary (3 steps), CTA.
-
-**Features page**: Every feature with a real screenshot and benefit-focused description. Group by category if there are 6+. Each feature gets enough space to actually explain what it does.
-
-**How It Works page**: The primary workflow as a step-by-step visual guide. Each step has a screenshot (or animated GIF), a heading, and 2-3 sentences. This page answers "ok but what does using it actually look like?"
-
+- **Home page**: Hero GIF or key screenshot, the best 3-4 feature highlights, a "How It Works" summary (3 steps), and CTA.
+- **Features page**: Give every feature a real screenshot, benefit-focused description and enough space to explain it; group by category at 6+.
+- **How It Works page**: Show the primary workflow step-by-step. Each step needs a screenshot or animated GIF, heading and 2-3 sentences; answer "ok but what does using it actually look like?"
 #### Thorough Mode: Comprehensive Site
-
 ```
 showcase/
 ├── index.html              # Home — hero, overview, value proposition
@@ -138,34 +180,19 @@ showcase/
 └── styles.css
 ```
 
-**Per-feature deep-dive pages**: Each major feature gets its own page with:
-- Hero screenshot of the feature in action
-- "What it does" — 1-2 paragraphs explaining the value
-- "How it works" — step-by-step with screenshots or GIF
-- "Why it matters" — the problem this solves
-- Edge cases or power-user tips
-- Link to next feature (flow between pages)
-
-**Use case pages**: Story-driven pages that show the app in a real scenario:
-- "It's Monday morning. You open the dashboard and see..."
-- Walk through a realistic workflow with screenshots at each step
-- Show the outcome — what's different because the user used this app
-- These are the most persuasive pages for apps that are hard to explain
-
-**Comparison page** (optional): "Why [app] vs [alternatives]" — honest comparison, not marketing fluff. Feature table, key differentiators, who it's best for.
-
+- **Per-feature deep dives**: Give each major feature a page with a hero screenshot in action, "What it does" (1-2 paragraphs on value), and "How it works" (step-by-step screenshots or GIF).
+- **Per-feature value**: "Why it matters" explains the problem solved. Edge cases or power-user tips help advanced users. Link to next feature for flow between pages.
+- **Use case pages**: Tell real scenarios: "It's Monday morning. You open the dashboard and see..." Walk through a realistic workflow with screenshots at each step and show the outcome. These persuade best when apps are hard to explain.
+- **Comparison page** (optional): "Why [app] vs [alternatives]". Use honest comparison, not marketing fluff: Feature table, key differentiators, who it's best for.
 ### 4. Animated GIF Walkthroughs
+Show actual interactions for key features; static screenshots miss workflow. Using Playwright or Chrome MCP, capture sequential screenshots, combine into GIFs, then display in HTML:
 
-Static screenshots don't convey workflow. For key features, capture animated GIFs that show the actual interaction:
-
-**How to capture** (using Playwright or Chrome MCP):
 1. Navigate to the starting state
 2. Start recording screenshots at ~2fps
 3. Perform the workflow (click, type, navigate)
 4. Stop recording
 5. Combine frames into a GIF
 
-**Generating the GIF** — capture sequential screenshots then combine:
 ```bash
 # Capture each step with a sequential prefix
 capture-screenshots http://localhost:5173/clients \
@@ -183,21 +210,13 @@ frames[0].save('showcase/screenshots/workflows/create-client.gif',
 "
 ```
 
-**What to animate**:
-- The primary "create something" flow (2-4 seconds)
-- A search/filter interaction (show results appearing)
-- A drag-and-drop or reorder operation
-- Dark mode toggle (satisfying visual)
-- Any "magic moment" where the app does something impressive (AI classification, instant search, real-time update)
+- **Create**: Animate the primary "create something" flow (2-4 seconds).
+- **Interactions**: Show search/filter results appearing, drag-and-drop or reorder, and the satisfying Dark mode toggle.
+- **Magic moments**: Show any impressive "magic moment", such as AI classification, instant search, real-time update.
+- **Length and size**: Max 10 seconds / 20 frames; shorter is better. Capture at 1280x720, display at 640x360 (half size for file size).
+- **Playback**: Pause briefly (3 frames) on the final state so viewers see the result. Loop continuously — no "click to play".
+- **Large files**: If >5MB, use fewer frames or crop to the relevant area.
 
-**GIF guidelines**:
-- Max 10 seconds / 20 frames — shorter is better
-- Capture at 1280x720, display at 640x360 (half size for file size)
-- Add a brief pause (3 frames) on the final state so viewers see the result
-- Loop continuously — no "click to play"
-- If the GIF would be >5MB, use fewer frames or crop to the relevant area
-
-**Display in HTML**:
 ```html
 <div class="browser-frame">
   <div class="browser-frame-bar">
@@ -210,12 +229,8 @@ frames[0].save('showcase/screenshots/workflows/create-client.gif',
        loading="lazy" width="640" height="360">
 </div>
 ```
-
 ### 5. Explaining Agentic / AI Apps
-
-Agentic apps are especially hard to market because the value is invisible — the AI does work the user never sees. Standard screenshots show a chat interface. That's not compelling.
-
-**Patterns that work for agentic apps**:
+Agentic AI work is often invisible; chat-only screenshots are not compelling. Use these patterns to show the work users never see:
 
 | Pattern | What it shows | Example |
 |---------|-------------|---------|
@@ -225,11 +240,9 @@ Agentic apps are especially hard to market because the value is invisible — th
 | **Side-by-side** | Show the agent's work next to what a human would have done | Split screen: left is the raw email, right is the extracted structured data |
 | **Magic moment GIF** | One animation of the most impressive thing | User asks a question → agent searches knowledge → returns answer with sources |
 
-**Copy tips for agentic apps**:
-- Lead with the outcome, not the technology ("Know every client's history" not "AI-powered CRM")
-- Show volume ("Processed 1,200 emails" is more impressive than "Processes your emails")
-- Use time comparisons ("What took 2 hours now takes 30 seconds")
-- Avoid jargon ("Finds connections in your data" not "Semantic vector search with RAG")
+- **Outcome**: Lead with the outcome, not technology ("Know every client's history" not "AI-powered CRM").
+- **Evidence**: Show volume ("Processed 1,200 emails" rather than "Processes your emails") and time comparisons ("What took 2 hours now takes 30 seconds").
+- **Plain language**: Avoid jargon ("Finds connections in your data" not "Semantic vector search with RAG").
 
 ### 5. Screenshot Presentation
 
